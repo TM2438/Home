@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>西宮すごろく</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background-color: #f9f9f9; }
+        .container { max-width: 600px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1, h2 { text-align: center; color: #333; }
+        .section { margin-bottom: 20px; }
+        .radio-group { display: flex; justify-content: center; gap: 15px; margin-bottom: 15px; }
+        .input-group { text-align: center; margin-bottom: 20px; }
+        input[type="text"] { font-size: 20px; padding: 5px; width: 60px; text-align: center; text-transform: uppercase; }
+        button { font-size: 16px; padding: 8px 20px; cursor: pointer; }
+        /* ダイアログスタイル */
+        dialog { border: none; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); width: 90%; max-width: 500px; padding: 20px; max-height: 80vh; overflow-y: auto; }
+        dialog::backdrop { background: rgba(0,0,0,0.5); }
+        .dialog-content p { margin: 10px 0; line-height: 1.5; }
+        .label { font-weight: bold; color: #0056b3; }
+        .mp-result { font-weight: bold; color: #d9534f; font-size: 1.1em; background: #fdf0f0; padding: 10px; border-radius: 4px; text-align: center; }
+    </style>
+</head>
+<body>
+
+<div class="container" id="setupScreen">
+    <h1>西宮すごろく - データ読み込み</h1>
+    <div class="section" style="text-align: center;">
+        <p>「名所一覧CSVファイル」を選択してください。</p>
+        <input type="file" id="csvFileInput" accept=".csv">
+    </div>
+</div>
+
+<div class="container" id="mainScreen" style="display: none;">
+    <h1>西宮すごろく</h1>
+    
+    <div class="section radio-group">
+        <label><input type="radio" name="season" value="春" checked> 春</label>
+        <label><input type="radio" name="season" value="夏"> 夏</label>
+        <label><input type="radio" name="season" value="秋"> 秋</label>
+        <label><input type="radio" name="season" value="冬"> 冬</label>
+    </div>
+
+    <div class="section input-group">
+        <label>セル番号： <input type="text" id="cellInput" maxlength="2"></label>
+    </div>
+
+    <div style="text-align: center;">
+        <button id="okBtn">OK</button>
+    </div>
+</div>
+
+<!-- うんちくダイアログ -->
+<dialog id="infoDialog">
+    <h2>西宮うんちく</h2>
+    <div class="dialog-content">
+        <p><span class="label">【季節・セル】</span> <span id="dlgSeasonCell"></span></p>
+        <p><span class="label">【名称】</span> <span id="dlgName"></span></p>
+        <p><span class="label">【説明文】</span><br><span id="dlgDesc"></span></p>
+        <p><span class="label">【うんちく】</span><br><span id="dlgUnchiku"></span></p>
+        <p class="mp-result" id="dlgMp"></p>
+    </div>
+    <div style="text-align: center; margin-top: 20px;">
+        <button id="dialogOkBtn">OK</button>
+    </div>
+</dialog>
+
+<script>
+    let placeData = [];
+
+    // CSVのパース処理（ダブルクォーテーション内のカンマ対応）
+    function parseCSV(text) {
+        let p = '', row = [''], ret = [row], i = 0, r = 0, s = !0, l;
+        for (l of text) {
+            if ('"' === l) {
+                if (s && l === p) row[i] += l;
+                s = !s;
+            } else if (',' === l && s) l = row[++i] = '';
+            else if ('\n' === l && s) {
+                if ('\r' === p) row[i] = row[i].slice(0, -1);
+                row = ret[++r] = [l = '']; i = 0;
+            } else row[i] += l;
+            p = l;
+        }
+        return ret.filter(r => r.length > 1 || r[0] !== "");
+    }
+
+    // CSVファイル読み込み処理
+    document.getElementById('csvFileInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            const csvArray = parseCSV(event.target.result);
+            if (csvArray.length < 2) {
+                showCsvError();
+                return;
+            }
+
+            const headers = csvArray[0].map(h => h.trim());
+            const requiredHeaders = ['季節', 'セル位置', '名称', '説明文', 'うんちく1', 'うんちく2', 'うんちく3'];
+            const isValidFormat = requiredHeaders.every(req => headers.includes(req));
+
+            if (!isValidFormat) {
+                showCsvError();
+                return;
+            }
+
+            // オブジェクト配列に変換
+            placeData = [];
+            for (let i = 1; i < csvArray.length; i++) {
+                let obj = {};
+                for (let j = 0; j < headers.length; j++) {
+                    obj[headers[j]] = csvArray[i][j] ? csvArray[i][j].trim() : "";
+                }
+                placeData.push(obj);
+            }
+
+            // 画面切り替え
+            document.getElementById('setupScreen').style.display = 'none';
+            document.getElementById('mainScreen').style.display = 'block';
+            document.getElementById('cellInput').focus();
+        };
+        reader.readAsText(file); // UTF-8として読み込み
+    });
+
+    function showCsvError() {
+        alert("規定のフォーマットが正しくありません。\n正しいCSVファイルを選択してください。");
+        document.getElementById('csvFileInput').value = '';
+    }
+
+    // ゲームメイン処理
+    function executeMain() {
+        const selectedSeason = document.querySelector('input[name="season"]:checked');
+        if (!selectedSeason) return;
+
+        let cellValue = document.getElementById('cellInput').value.toLowerCase().trim();
+
+        // 1. セル番号チェック
+        const cellRegex = /^[a-g][1-7]$/;
+        if (!cellRegex.test(cellValue) || cellValue === 'a1' || cellValue === 'g7') {
+            alert("正しく入力してください\nNG文字列: " + document.getElementById('cellInput').value);
+            document.getElementById('cellInput').value = '';
+            document.getElementById('cellInput').focus();
+            return;
+        }
+
+        const upperCell = cellValue.toUpperCase();
+        const seasonStr = selectedSeason.value;
+
+        // 該当データの検索
+        const targetData = placeData.find(d => 
+            d['セル位置'] === upperCell && d['季節'].includes(seasonStr)
+        );
+
+        let dispName = "データなし";
+        let dispDesc = "該当するデータがCSVに見つかりませんでした。";
+        let dispUnchiku = "";
+
+        if (targetData) {
+            dispName = targetData['名称'];
+            dispDesc = targetData['説明文'];
+            // うんちく乱数 1〜3
+            const unchikuNum = Math.floor(Math.random() * 3) + 1;
+            dispUnchiku = targetData[`うんちく${unchikuNum}`];
+        }
+
+        // 2. MP乱数作成 (1〜100)
+        const mpRand = Math.floor(Math.random() * 100) + 1;
+        let mpResult = "";
+        
+        if (mpRand === 100) {
+            mpResult = "もっているMPを全部 他の人に分配し、端数没収";
+        } else if (mpRand >= 95 && mpRand <= 99) {
+            mpResult = "もっているMPをすべて没収";
+        } else if (mpRand >= 1 && mpRand <= 10) {
+            // 乱数が1〜10の場合は、負の数字にして没収扱いとする
+            mpResult = `MPを -${mpRand} ポイント取得（${mpRand}ポイント没収）`;
+        } else {
+            // 残りの乱数(11〜94)は、10で割って切り捨ててから-1する
+            const getPoints = Math.floor(mpRand / 10) - 1;
+            mpResult = `MPを ${getPoints} ポイント取得`;
+        }
+
+        // 3. ダイアログにセットして表示
+        document.getElementById('dlgSeasonCell').textContent = `${seasonStr} / ${upperCell}`;
+        document.getElementById('dlgName').textContent = dispName;
+        document.getElementById('dlgDesc').textContent = dispDesc;
+        document.getElementById('dlgUnchiku').textContent = dispUnchiku;
+        document.getElementById('dlgMp').textContent = mpResult;
+        
+        const infoDialog = document.getElementById('infoDialog');
+        infoDialog.showModal();
+        infoDialog.scrollTop = 0; // ←この1行を追加して一番上にスクロールを戻す
+        
+    }
+
+    // OKボタンとEnterキーのイベント登録
+    document.getElementById('okBtn').addEventListener('click', executeMain);
+    document.getElementById('cellInput').addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') {
+            executeMain();
+        }
+    });
+
+    // ダイアログのOKボタン処理
+    document.getElementById('dialogOkBtn').addEventListener('click', function() {
+        document.getElementById('infoDialog').close();
+        const cellInput = document.getElementById('cellInput');
+        cellInput.value = '';
+        cellInput.focus();
+    });
+</script>
+
+</body>
+</html>
